@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cuffed Till Death</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        canvas {
+            background: #222;
+            image-rendering: pixelated;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+/**
+ * CUFFED TILL DEATH
+ * A side-scrolling beat-em-up
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const WIDTH = 960;
+const HEIGHT = 720;
+canvas.width = WIDTH;
+canvas.height = HEIGHT;
+
+// --- Game State ---
+const GS = {
+    playing: true,
+    score: 0,
+    combo: 0,
+    comboTimer: 0,
+    stage: 0,
+    shake: 0,
+    hitstop: 0,
+    lastInputTime: Date.now(),
+    cameraX: 0,
+    autopilot: false,
+    stageMap: [
+        { name: "City Streets", color: "#444", enemies: 15, goal: 2000 },
+        { name: "Central Park", color: "#262", enemies: 20, goal: 4000 },
+        { name: "Shopping Mall", color: "#66a", enemies: 25, goal: 6000 },
+        { name: "The Chapel", color: "#aaa", enemies: 1, goal: 8000, boss: true }
+    ]
+};
+
+// --- Input ---
+const keys = {};
+window.onkeydown = (e) => { 
+    keys[e.code] = true; 
+    GS.lastInputTime = Date.now(); 
+};
+window.onkeyup = (e) => { keys[e.code] = false; };
+
+// --- Audio System ---
+const AudioSys = (() => {
+    let ctx = null;
+    const init = () => { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); };
+    
+    const playTone = (freq, type, dur, vol = 0.1) => {
+        if (!ctx) return;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, ctx.currentTime);
+        gain.gain.setValueAtTime(vol, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + dur);
+    };
+
+    const playNoise = (dur, vol = 0.05) => {
+        if (!ctx) return;
+        const bufferSize = ctx.sampleRate * dur;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        const gain = ctx.createGain();
+        gain.gain.setValueAtTime(vol, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + dur);
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        src.start();
+    };
+
+    const playMusic = (t) => {
+        if (!ctx) return;
+        const tempo = 120;
+        const beat = 60 / tempo;
+        const notes = [110, 130, 110, 164, 110, 130, 146, 110];
+        const step = Math.floor(t / beat) % notes.length;
+        if (Math.floor(t / beat) !== Math.floor((t - 0.016) / beat)) {
+            playTone(notes[step], 'square', 0.1, 0.03);
+            if (step % 4 === 0) playNoise(0.1, 0.08);
+        }
+    };
+
+    return { init, playTone, playNoise, playMusic };
+})();
+
+// --- Helpers ---
+const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
+const dist = (a, b) => Math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2);
+
+// --- Entities ---
+class Entity {
+    constructor(x, y, w, h, color) {
+        this.x = x; this.y = y; this.w = w; this.h = h; this.color = color;
+        this.vx = 0; this.vy = 0;
+        this.hp = 100; this.maxHp = 100;
+        this.state = 'idle'; // idle, walk, attack, stun, throw
+        this.dir = 1;
+        this.timer = 0;
+        this.flash = 0;
+        this.weapon = null;
+    }
+    update() {
+        this.x += this.vx; this.y += this.vy;
+        this.vx *= 0.8; this.vy *= 0.8;
+        if (this.flash > 0) this.flash--;
+        if (this.timer > 0) this.timer--;
+    }
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        if (this.flash > 0) ctx.fillStyle = 'white';
+        else ctx.fillStyle = this.color;
+        ctx.fillRect(-this.w/2, -this.h, this.w, this.h);
+        // Eyes
+        ctx.fillStyle = 'black';
+        ctx.fillRect(this.dir * 5, -this.h + 5, 4, 4);
+        ctx.restore();
+    }
+}
+
+class Player extends Entity {
+    constructor(x, y, color, isBride) {
+        super(x, y, 30, 60, color);
+        this.isBride = isBride;
+        this.grabbing = null;
+        this.swingAngle = 0;
+    }
+    attack() {
+        if (this.state === 'attack') return;
+        this.state = 'attack';
+        this.timer = 15;
+        AudioSys.playTone(150 + Math.random()*50, 'triangle', 0.1);
+        
+        // Hitbox
+        const hitRange = 50;
+        entities.forEach(e => {
+            if (e instanceof Enemy && dist(this, e) < hitRange) {
+                e.takeDamage(15, this.dir);
+                GS.shake = 5;
+                GS.hitstop = 3;
+            }
+        });
+    }
+    takeDamage(dmg) {
+        this.hp -= dmg;
+        this.flash = 5;
+        AudioSys.playNoise(0.1, 0.1);
+    }
+}
+
+class Enemy extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 30, 60, '#f55');
+        this.type = type;
+        this.aiTimer = 0;
+        this.setupType();
+    }
+    setupType() {
+        switch(this.type) {
+            case 1: this.color = '#f55'; this.hp = 50; break; // Thug
+            case 2: this.color = '#a55'; this.w = 45; this.hp = 120; break; // Brute
+            case 3: this.color = '#f88'; this.hp = 40; break; // Speedster
+            case 4: this.color = '#f0f'; this.hp = 60; break; // Ranged
+            case 5: this.color = '#f5a'; this.hp = 80; break; // Grappler
+            case 6: this.color = '#fff'; this.w = 60; this.h = 80; this.hp = 1000; break; // Boss
+        }
+    }
+    update(players) {
+        super.update();
+        if (this.timer > 0) return;
+
+        const target = players[0];
+        const d = dist(this, target);
+        this.dir = target.x > this.x ? 1 : -1;
+
+        if (this.type === 6) { // Boss
+            this.bossAI(target);
+            return;
+        }
+
+        if (d > 40) {
+            const speed = this.type === 3 ? 3 : 1.5;
+            this.vx += this.dir * speed * 0.1;
+        } else {
+            if (Math.random() < 0.05) {
+                this.attack(players);
+            }
+        }
+    }
+    attack(players) {
+        this.state = 'attack';
+        this.timer = 20;
+        players.forEach(p => {
+            if (dist(this, p) < 50) p.takeDamage(10);
+        });
+        AudioSys.playTone(100, 'sawtooth', 0.1);
+    }
+    bossAI(target) {
+        const d = dist(this, target);
+        this.dir = target.x > this.x ? 1 : -1;
+        if (d > 100) this.vx += this.dir * 0.2;
+        else if (Math.random() < 0.05) {
+            this.state = 'attack';
+            this.timer = 30;
+            players.forEach(p => {
+                if (dist(this, p) < 80) p.takeDamage(20);
+            });
+            GS.shake = 10;
+            AudioSys.playTone(60, 'square', 0.2);
+        }
+    }
+    takeDamage(dmg, dir) {
+        this.hp -= dmg;
+        this.flash = 5;
+        this.vx = dir * 5;
+        AudioSys.playNoise(0.05, 0.1);
+        if (this.hp <= 0) {
+            this.state = 'stun';
+            this.timer = 60;
+        }
+    }
+}
+
+class Crate extends Entity {
+    constructor(x, y) {
+        super(x, y, 40, 40, '#852');
+        this.isCrate = true;
+    }
+    update() {
+        if (this.timer > 0) {
+            this.timer--;
+            if (this.timer === 0) {
+                entities = entities.filter(e => e !== this);
+                spawnWeapon(this.x, this.y);
+            }
+        }
+    }
+}
+
+class Weapon extends Entity {
+    constructor(x, y, type) {
+        super(x, y, 20, 20, '#ff0');
+        this.type = type;
+        this.isWeapon = true;
+    }
+}
+
+// --- Game Engine ---
+let players = [];
+let entities = [];
+let particles = [];
+let weaponTypes = ['Bouquet', 'Cake Knife', 'Folding Chair', 'Champagne'];
+
+function spawnWeapon(x, y) {
+    const type = weaponTypes[Math.floor(Math.random() * weaponTypes.length)];
+    entities.push(new Weapon(x, y, type));
+}
+
+function initStage() {
+    const s = GS.stageMap[GS.stage];
+    players = [
+        new Player(200, 500, '#fff', true),
+        new Player(250, 500, '#222', false)
+    ];
+    entities = [];
+    
+    if (s.boss) {
+        entities.push(new Enemy(1200, 500, 6));
+    } else {
+        for (let i = 0; i < s.enemies; i++) {
+            entities.push(new Enemy(800 + i * 300 + Math.random()*200, 400 + Math.random()*200, 1 + Math.floor(Math.random()*5)));
+        }
+        for (let i = 0; i < 5; i++) {
+            entities.push(new Crate(600 + i * 600, 400 + Math.random()*200));
+        }
+    }
+}
+
+function createParticle(x, y, color) {
+    for (let i = 0; i < 5; i++) {
+        particles.push({
+            x, y, 
+            vx: (Math.random() - 0.5) * 10, 
+            vy: (Math.random() - 0.5) * 10, 
+            life: 20, 
+            color
+        });
+    }
+}
+
+function update() {
+    if (GS.hitstop > 0) {
+        GS.hitstop--;
+        return;
+    }
+
+    // Autopilot Logic
+    const now = Date.now();
+    if (now - GS.lastInputTime > 3000) {
+        GS.autopilot = true;
+        const target = entities.find(e => e instanceof Enemy);
+        if (target) {
+            if (target.x < players[0].x) keys['ArrowLeft'] = true; else keys['ArrowRight'] = true;
+            if (dist(players[0], target) < 100) {
+                keys['KeyZ'] = (Math.random() < 0.1);
+                keys['KeyX'] = (Math.random() < 0.1);
+            }
+        }
+    } else {
+        GS.autopilot = false;
+    }
+
+    // Player Movement
+    const moveSpeed = 4;
+    const p1 = players[0], p2 = players[1];
+
+    if (keys['ArrowLeft']) { p1.vx -= 0.5; p2.vx -= 0.5; p1.dir = -1; p2.dir = -1; }
+    if (keys['ArrowRight']) { p1.vx += 0.5; p2.vx += 0.5; p1.dir = 1; p2.dir = 1; }
+    if (keys['ArrowUp']) { p1.vy -= 0.5; p2.vy -= 0.5; }
+    if (keys['ArrowDown']) { p1.vy += 0.5; p2.vy += 0.5; }
+    if (keys['Space']) { p1.vy = -10; p2.vy = -10; }
+    
+    if (keys['KeyZ']) p1.attack();
+    if (keys['KeyX']) p2.attack();
+
+    // Link Physics
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const d = Math.sqrt(dx*dx + dy*dy);
+    const minD = 60, maxD = 150;
+    
+    if (d > maxD) {
+        const force = (d - maxD) * 0.05;
+        p1.vx += (dx/d) * force;
+        p2.vx -= (dx/d) * force;
+        p1.vy += (dy/d) * force;
+        p2.vy -= (dy/d) * force;
+        
+        // Chain Tripping
+        entities.forEach(e => {
+            if (e instanceof Enemy && e.state !== 'stun') {
+                // Check if enemy is crossing the line between players
+                const cross = (e.x - p1.x) * (p2.y - p1.y) - (e.y - p1.y) * (p2.x - p1.x);
+                if (Math.abs(cross) < 50 && dist(e, p1) < maxD && dist(e, p2) < maxD) {
+                    e.state = 'stun';
+                    e.timer = 60;
+                    AudioSys.playNoise(0.1, 0.1);
+                }
+            }
+        });
+    }
+
+    // Grabbing/Throwing
+    players.forEach(p => {
+        if (p.grabbing) {
+            if (p.grabbing instanceof Enemy) {
+                p.grabbing.x = p.x + p.dir * 30;
+                p.grabbing.y = p.y;
+                if (keys['KeyZ'] || keys['KeyX']) {
+                    p.grabbing.vx = p.dir * 15;
+                    p.grabbing.vy = -5;
+                    p.grabbing = null;
+                    GS.score += 100;
+                }
+            } else if (p.grabbing instanceof Player) {
+                p.swingAngle += 0.2;
+                const r = 80;
+                p.grabbing.x = p.x + Math.cos(p.swingAngle) * r;
+                p.grabbing.y = p.y + Math.sin(p.swingAngle) * r;
+                if (keys['KeyZ'] || keys['KeyX']) {
+                    p.grabbing.vx = Math.cos(p.swingAngle) * 20;
+                    p.grabbing.vy = Math.sin(p.swingAngle) * 20;
+                    p.grabbing = null;
+                }
+            }
+        } else {
+            entities.forEach(e => {
+                if (e instanceof Enemy && e.state === 'stun' && dist(p, e) < 40) {
+                    p.grabbing = e;
+                }
+            });
+            // Grab partner
+            const partner = p === p1 ? p2 : p1;
+            if (dist(p, partner) < 40 && (keys['KeyZ'] || keys['KeyX']) && p.state === 'idle') {
+                p.grabbing = partner;
+            }
+        }
+    });
+
+    players.forEach(p => {
+        p.update();
+        p.y = clamp(p.y, 400, HEIGHT - 20);
+    });
+
+    entities.forEach(e => {
+        e.update(players);
+        if (e instanceof Crate && dist(players[0], e) < 40) {
+            e.timer = 20;
+            AudioSys.playNoise(0.1, 0.1);
+        }
+        if (e instanceof Weapon && dist(players[0], e) < 40) {
+            players[0].weapon = e.type;
+            entities = entities.filter(ent => ent !== e);
+            AudioSys.playTone(400, 'sine', 0.2);
+        }
+        if (e instanceof Enemy && e.hp <= 0 && e.state !== 'stun') {
+            createParticle(e.x, e.y, e.color);
+            entities = entities.filter(ent => ent !== e);
+            GS.score += 500;
+        }
+    });
+
+    particles.forEach(p => {
+        p.x += p.vx; p.y += p.vy; p.life--;
+    });
+    particles = particles.filter(p => p.life > 0);
+
+    // Camera & Stage progression
+    GS.cameraX = players[0].x - 300;
+    if (players[0].x > GS.stageMap[GS.stage].goal) {
+        GS.stage++;
+        if (GS.stage >= GS.stageMap.length) {
+            alert("YOU MADE IT TO THE CHAPEL! FINAL SCORE: " + GS.score);
+            GS.stage = 0;
+            GS.score = 0;
+        }
+        initStage();
+    }
+
+    if (p1.hp <= 0 || p2.hp <= 0) {
+        GS.playing = false;
+        setTimeout(() => {
+            GS.playing = true;
+            GS.stage = 0;
+            GS.score = 0;
+            initStage();
+        }, 2000);
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+    
+    ctx.save();
+    if (GS.shake > 0) {
+        ctx.translate(Math.random()*GS.shake, Math.random()*GS.shake);
+        GS.shake--;
+    }
+    ctx.translate(-GS.cameraX, 0);
+
+    // Background
+    ctx.fillStyle = GS.stageMap[GS.stage].color;
+    ctx.fillRect(GS.cameraX, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = '#333';
+    ctx.fillRect(GS.cameraX, 400, WIDTH, HEIGHT - 400);
+
+    // Chain
+    ctx.strokeStyle = '#aaa';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(players[0].x, players[0].y - 30);
+    ctx.lineTo(players[1].x, players[1].y - 30);
+    ctx.stroke();
+
+    entities.forEach(e => e.draw());
+    players.forEach(p => p.draw());
+    
+    particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 4, 4);
+    });
+
+    ctx.restore();
+
+    // HUD
+    ctx.fillStyle = 'white';
+    ctx.font = '20px Courier New';
+    ctx.fillText(`BRIDE: ${Math.floor(players[0].hp)}%`, 20, 30);
+    ctx.fillText(`GROOM: ${Math.floor(players[1].hp)}%`, 20, 60);
+    ctx.fillText(`SCORE: ${GS.score}`, WIDTH - 200, 30);
+    ctx.fillText(`STAGE: ${GS.stageMap[GS.stage].name}`, WIDTH/2 - 100, 30);
+    
+    if (GS.combo > 0) {
+        ctx.font = '40px Courier New';
+        ctx.fillText(`${GS.combo} HIT COMBO!`, WIDTH/2 - 100, 80);
+    }
+
+    // Map
+    ctx.strokeStyle = 'white';
+    ctx.strokeRect(WIDTH - 150, 100, 100, 20);
+    ctx.fillStyle = 'red';
+    ctx.fillRect(WIDTH - 150, 100, (GS.stage / 4) * 100, 20);
+    
+    if (!GS.playing) {
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(0,0,WIDTH,HEIGHT);
+        ctx.fillStyle = 'white';
+        ctx.font = '60px Courier New';
+        ctx.fillText("GAME OVER", WIDTH/2 - 150, HEIGHT/2);
+    }
+
+    if (GS.autopilot) {
+        ctx.fillStyle = 'yellow';
+        ctx.font = '20px Courier New';
+        ctx.fillText("AUTOPILOT ACTIVE", WIDTH/2 - 100, 120);
+    }
+}
+
+function loop(t) {
+    AudioSys.init();
+    AudioSys.playMusic(t/1000);
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+initStage();
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>

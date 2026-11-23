@@ -1,0 +1,20 @@
+[
+ {
+  "id": "2026-11-23-cuffed-till-death",
+  "date": "2026-11-23",
+  "title": "Cuffed Till Death",
+  "prompt": "Make a side-scrolling beat-em-up called Cuffed Till Death. A bride and groom have been handcuffed together by a prank, and a gang has stolen their rings. They must brawl across town to the chapel. You control both at once, linked by a stretchy chain. Arrows move the pair, space jumps, Z attacks with the bride and X with the groom. Alternating Z and X builds tandem combos. Walk into a stunned enemy to grab them, then throw. Grab your own partner and swing them as a spinning flail. A taut chain trips enemies. Include breakable crates with weapons to pick up (bouquet, cake knife, folding chair, champagne bottle), at least five enemy types with different behaviour, and at least four stages. Finish with a gang boss fight that has several phases. Show a HUD with both health bars, score, combo counter and a stage map. One self-contained HTML file: all graphics drawn in code, all sound and music made with the Web Audio API, no images, fonts, audio files or network requests. Fill the browser window and look right at 960x720. Start playing immediately, with no menu, and restart automatically after game over. After 3 seconds without a key press, an autopilot plays skilfully. Add lots of juice: particles, screen shake, hit flashes, hitstop, sound effects and music.",
+  "play_tip": "Arrows move, Space jumps, Z bride attacks, X groom attacks.",
+  "models": {
+   "a": {
+    "label": "GPT-6.2 Sol",
+    "playable": true
+   },
+   "b": {
+    "label": "Gemma 4 31B",
+    "playable": true
+   }
+  },
+  "video": null
+ }
+]
