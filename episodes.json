@@ -16,5 +16,23 @@
    }
   },
   "video": null
+ },
+ {
+  "id": "2026-11-24-warranty-void-canyon-run",
+  "date": "2026-11-24",
+  "title": "Warranty Void: Canyon Run",
+  "prompt": "Build \"Warranty Void: Canyon Run\", an arcade flight combat game in the style of the 2000s console 3D era, as one self-contained HTML file.\n\nPremise: you stole a prototype jet. Its onboard AI, VEX, is the villain and narrates everything in sarcastic mission text while sending its own fleet after you.\n\nLook and feel: real-time WebGL 3D with a perspective camera, smooth third-person chase cam, rounded low-poly models built in code, procedural filtered textures, per-pixel lighting, one shadow-casting sun with a small shadow map, bloom at half resolution, lens flare, minimap, mission text, tumbling physics debris.\n\nGame: four missions through winding canyons with air and ground targets: drones that swarm, turrets that lead their shots, gunships that chase, missile trucks. Guns plus lock-on missiles, barrel roll dodge, boost. Difficulty escalates. Mission 4 is a boss fight against VEX's flying fortress with destroyable parts, then a carrier landing scored for precision. HUD: score, armor, lives, missiles, stage, timer, combo multiplier.\n\nRules:\n- Everything generated in code: models, textures, music and sound effects (Web Audio API, orchestral heroic score). No images, fonts, audio files or network requests except an optional library.\n- Fills the browser window, looks right at 960x720.\n- Starts playing instantly, no menu or click; auto-restarts after game over.\n- Controls: arrow keys, space, Z, X only. After 3 seconds without input a skilful autopilot plays.\n- Lots of juice: particles, screen shake, hit flashes.\n- Must run smoothly on a modest computer: a few hundred draw calls at most, use instancing or merged geometry.\n\nYou may write from scratch or use one of:\n- three.js 0.180.0 via import map: three = https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js and three/addons/ = https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/\n- Babylon.js: https://cdn.jsdelivr.net/npm/babylonjs@8.56.2/babylon.js (global BABYLON)\n- PlayCanvas: https://cdn.jsdelivr.net/npm/playcanvas@2.24.3/build/playcanvas.min.js (global pc)",
+  "play_tip": "Arrows steer, Space fires guns, Z launches missiles, X boosts and rolls.",
+  "models": {
+   "a": {
+    "label": "DeepSeek V4 Flash",
+    "playable": true
+   },
+   "b": {
+    "label": "GPT-6.2 Astra",
+    "playable": true
+   }
+  },
+  "video": null
  }
 ]
